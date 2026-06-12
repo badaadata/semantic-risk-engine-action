@@ -1,0 +1,128 @@
+name: Semantic SQL Risk Check
+description: Detect breaking semantic changes in dbt SQL models before they merge.
+author: badaadata
+
+inputs:
+  api_key:
+    description: "Your Semantic Risk Engine API key (sre_...)"
+    required: true
+  dialect:
+    description: "SQL dialect (snowflake | bigquery | databricks | duckdb | redshift)"
+    required: false
+    default: snowflake
+  dbt_profiles_dir:
+    description: "Directory containing profiles.yml"
+    required: false
+    default: "."
+  dbt_target:
+    description: "dbt target name to use for compilation"
+    required: false
+    default: ci
+  api_base_url:
+    description: "Base URL for the Semantic Risk Engine API (override for local/ngrok testing)"
+    required: false
+    default: "https://api.badaadata.com"
+
+runs:
+  using: composite
+  steps:
+    - name: Find changed SQL models
+      shell: bash
+      run: |
+        git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD -- 'models/' \
+          | grep '\.sql$' > /tmp/sre_changed_models.txt || true
+
+        echo "Changed models:"
+        cat /tmp/sre_changed_models.txt || echo "(none)"
+
+        if [ ! -s /tmp/sre_changed_models.txt ]; then
+          echo "SRE_NO_CHANGES=true" >> $GITHUB_ENV
+        fi
+
+    - name: Compile PR branch (HEAD)
+      if: env.SRE_NO_CHANGES != 'true'
+      shell: bash
+      run: |
+        echo "SRE_HEAD_REF=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+        SELECTORS=$(cat /tmp/sre_changed_models.txt \
+          | xargs -I{} basename {} .sql \
+          | tr '\n' ' ')
+        echo "Compiling PR branch models: $SELECTORS"
+
+        dbt compile \
+            --select $SELECTORS \
+            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
+            --target ${{ inputs.dbt_target }} \
+          || dbt compile \
+            --select $SELECTORS \
+            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
+            --target ${{ inputs.dbt_target }} \
+            --empty
+
+        cp -r target/compiled /tmp/sre_head_compiled
+        cp target/manifest.json /tmp/sre_manifest.json
+
+    - name: Compile base branch
+      if: env.SRE_NO_CHANGES != 'true'
+      shell: bash
+      run: |
+        git checkout origin/${{ github.event.pull_request.base.ref }}
+
+        SELECTORS=$(cat /tmp/sre_changed_models.txt \
+          | xargs -I{} basename {} .sql \
+          | tr '\n' ' ')
+
+        dbt compile \
+            --select $SELECTORS \
+            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
+            --target ${{ inputs.dbt_target }} \
+          || dbt compile \
+            --select $SELECTORS \
+            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
+            --target ${{ inputs.dbt_target }} \
+            --empty \
+          || echo "Base compile failed (model may be new) — continuing"
+
+        [ -d target/compiled ] && cp -r target/compiled /tmp/sre_base_compiled \
+          || mkdir -p /tmp/sre_base_compiled
+
+        git checkout $SRE_HEAD_REF
+
+    - name: Build payload and call API
+      if: env.SRE_NO_CHANGES != 'true'
+      shell: bash
+      run: |
+        python3 ${{ github.action_path }}/scripts/build_payload.py \
+          --changed /tmp/sre_changed_models.txt \
+          --base-dir /tmp/sre_base_compiled \
+          --head-dir /tmp/sre_head_compiled \
+          --manifest /tmp/sre_manifest.json \
+          --dialect ${{ inputs.dialect }} \
+          > /tmp/sre_payload.json
+
+        echo "=== Payload ==="
+        cat /tmp/sre_payload.json
+
+        python3 ${{ github.action_path }}/scripts/call_api.py \
+          --payload /tmp/sre_payload.json \
+          --api-url ${{ inputs.api_base_url }}/v1/analyze \
+          --api-key ${{ inputs.api_key }} \
+          > /tmp/sre_response.json
+
+    - name: Post PR comment
+      if: env.SRE_NO_CHANGES != 'true'
+      shell: bash
+      run: |
+        python3 ${{ github.action_path }}/scripts/post_comment.py \
+          --response /tmp/sre_response.json \
+          --manifest /tmp/sre_manifest.json \
+          --token ${{ github.token }} \
+          --repo ${{ github.repository }} \
+          --pr ${{ github.event.pull_request.number }}
+
+    - name: Skip — no SQL model changes
+      if: env.SRE_NO_CHANGES == 'true'
+      shell: bash
+      run: |
+        echo "No SQL model changes detected in models/. Skipping semantic risk check."
