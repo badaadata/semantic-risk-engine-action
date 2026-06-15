@@ -1,8 +1,20 @@
 """Build the API request payload from compiled dbt SQL files."""
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+
+def _normalize_for_comparison(sql: str) -> str:
+    """Collapse all whitespace variants to single space for cross-platform comparison.
+
+    Handles:
+    - Windows (\\r\\n), Unix (\\n), old macOS (\\r) line endings
+    - Tabs, multiple spaces, mixed indentation
+    - Leading/trailing whitespace
+    """
+    return re.sub(r"\s+", " ", sql).strip()
 
 
 def build_payload(changed_file: str, base_dir: str, head_dir: str, manifest_file: str, dialect: str) -> dict:
@@ -34,10 +46,17 @@ def build_payload(changed_file: str, base_dir: str, head_dir: str, manifest_file
             print(f"INFO: {model_name} is a new model — skipping (no base to compare)", file=sys.stderr)
             continue
 
+        old_sql = base_sql_path.read_text()
+        new_sql = head_sql_path.read_text()
+
+        if _normalize_for_comparison(old_sql) == _normalize_for_comparison(new_sql):
+            print(f"INFO: {model_name} compiled SQL is identical old→new — skipping", file=sys.stderr)
+            continue
+
         models.append({
             "model_name": model_name,
-            "old_sql": base_sql_path.read_text(),
-            "new_sql": head_sql_path.read_text(),
+            "old_sql": old_sql,
+            "new_sql": new_sql,
         })
 
     return {"models": models, "dialect": dialect}

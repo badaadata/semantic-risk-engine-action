@@ -68,7 +68,7 @@ def _format_severity_block(label: str, items: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-def format_comment(response: dict, manifest: dict) -> str:
+def format_comment(response: dict, manifest: dict, sha: str = "") -> str:
     downstream_map = _build_downstream_map(manifest)
     results = response.get("results", [])
 
@@ -134,9 +134,10 @@ def format_comment(response: dict, manifest: dict) -> str:
                 f"{detail_body}</details>\n"
             )
 
+    sha_suffix = f" · `{sha[:7]}`" if sha else ""
     header = (
         f"{MARKER}\n"
-        "## 🔍 Semantic SQL Risk Check\n\n"
+        f"## 🔍 Semantic SQL Risk Check{sha_suffix}\n\n"
     )
 
     if not results:
@@ -225,6 +226,7 @@ def main():
     parser.add_argument("--token", required=True, help="GitHub token")
     parser.add_argument("--repo", required=True, help="owner/repo string")
     parser.add_argument("--pr", required=True, type=int, help="PR number")
+    parser.add_argument("--sha", default="", help="HEAD commit SHA (optional, shown in comment header)")
     args = parser.parse_args()
 
     with open(args.response) as f:
@@ -232,7 +234,7 @@ def main():
     with open(args.manifest) as f:
         manifest = json.load(f)
 
-    body = format_comment(response, manifest)
+    body = format_comment(response, manifest, sha=args.sha)
     post_or_update_comment(body, args.token, args.repo, args.pr)
 
 

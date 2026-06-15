@@ -119,7 +119,8 @@ runs:
           --manifest /tmp/sre_manifest.json \
           --token ${{ github.token }} \
           --repo ${{ github.repository }} \
-          --pr ${{ github.event.pull_request.number }}
+          --pr ${{ github.event.pull_request.number }} \
+          --sha $SRE_HEAD_REF
 
     - name: Skip — no SQL model changes
       if: env.SRE_NO_CHANGES == 'true'
