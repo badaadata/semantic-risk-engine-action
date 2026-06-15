@@ -155,21 +155,27 @@ def format_comment(response: dict, manifest: dict) -> str:
     details_section = "\n".join(details_blocks) + "\n" if details_blocks else ""
 
     # Footer
+    total_medium = sum(len(r.get("medium", [])) for r in results)
+    total_low = sum(len(r.get("low", [])) for r in results)
+
     if total_high > 0:
-        # Find models with downstream count
         downstream_warnings = []
         for result in results:
             model_name = result.get("model_name", "")
             if result.get("high"):
                 d = downstream_map.get(model_name, 0)
                 if d:
-                    downstream_warnings.append(f"{d} downstream models may be affected by changes in {model_name}.")
+                    downstream_warnings.append(
+                        f"{d} downstream model(s) may be affected by changes in `{model_name}`."
+                    )
 
-        footer = f"---\n⚠️ **{total_high} HIGH risk change(s) detected. Review before merging.**"
+        footer = f"---\n⚠️ **{total_high} model(s) have HIGH risk changes. Review before merging.**"
         if downstream_warnings:
             footer += "\n" + "\n".join(downstream_warnings)
+    elif total_medium > 0 or total_low > 0:
+        footer = "---\n🟡 **No high-risk changes, but medium/low-risk changes detected. Review recommended.**"
     else:
-        footer = "---\n✅ No high-risk changes detected."
+        footer = "---\n✅ No significant risk changes detected."
 
     return header + table + details_section + footer
 
