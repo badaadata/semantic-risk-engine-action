@@ -17,7 +17,14 @@ def _normalize_for_comparison(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip()
 
 
-def build_payload(changed_file: str, base_dir: str, head_dir: str, manifest_file: str, dialect: str) -> dict:
+def build_payload(
+    changed_file: str,
+    base_dir: str,
+    head_dir: str,
+    manifest_file: str,
+    dialect: str,
+    skipped_file: str | None = None,
+) -> dict:
     changed_path = Path(changed_file)
     base = Path(base_dir)
     head = Path(head_dir)
@@ -28,6 +35,8 @@ def build_payload(changed_file: str, base_dir: str, head_dir: str, manifest_file
 
     lines = changed_path.read_text().splitlines()
     models = []
+    new_models = []
+    deleted_models = []
 
     for line in lines:
         line = line.strip()
@@ -39,11 +48,13 @@ def build_payload(changed_file: str, base_dir: str, head_dir: str, manifest_file
         head_sql_path = head / project_name / line
 
         if not head_sql_path.exists():
-            print(f"WARNING: compiled SQL not found for {model_name} on PR branch — skipping", file=sys.stderr)
+            print(f"INFO: {model_name} not found on PR branch — model deleted", file=sys.stderr)
+            deleted_models.append(model_name)
             continue
 
         if not base_sql_path.exists():
-            print(f"INFO: {model_name} is a new model — skipping (no base to compare)", file=sys.stderr)
+            print(f"INFO: {model_name} has no base — new model added", file=sys.stderr)
+            new_models.append(model_name)
             continue
 
         old_sql = base_sql_path.read_text()
@@ -59,6 +70,11 @@ def build_payload(changed_file: str, base_dir: str, head_dir: str, manifest_file
             "new_sql": new_sql,
         })
 
+    if skipped_file:
+        Path(skipped_file).write_text(
+            json.dumps({"new": new_models, "deleted": deleted_models}, indent=2)
+        )
+
     return {"models": models, "dialect": dialect}
 
 
@@ -69,9 +85,13 @@ def main():
     parser.add_argument("--head-dir", required=True, help="Path to head branch compiled dir")
     parser.add_argument("--manifest", required=True, help="Path to manifest.json")
     parser.add_argument("--dialect", required=True, help="SQL dialect (snowflake, bigquery, etc.)")
+    parser.add_argument("--skipped", default=None, help="Path to write new/deleted model names JSON")
     args = parser.parse_args()
 
-    payload = build_payload(args.changed, args.base_dir, args.head_dir, args.manifest, args.dialect)
+    payload = build_payload(
+        args.changed, args.base_dir, args.head_dir, args.manifest, args.dialect,
+        skipped_file=args.skipped,
+    )
     print(json.dumps(payload, indent=2))
 
 

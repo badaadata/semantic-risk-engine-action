@@ -68,15 +68,30 @@ def _format_severity_block(label: str, items: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-def format_comment(response: dict, manifest: dict, sha: str = "") -> str:
+def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict | None = None) -> str:
     downstream_map = _build_downstream_map(manifest)
     results = response.get("results", [])
+    skipped = skipped or {}
+    new_models = skipped.get("new", [])
+    deleted_models = skipped.get("deleted", [])
 
-    total_high = response.get("models_with_high_risk", 0)
+    total_high = response.get("models_with_high_risk", 0) + len(deleted_models)
 
     # Build summary table rows
     table_rows = []
     details_blocks = []
+
+    # Deleted models — HIGH risk, no API result
+    for model_name in deleted_models:
+        downstream = downstream_map.get(model_name, 0)
+        table_rows.append(
+            f"| `{model_name}` | 🔴 DELETED | — | — | — | {downstream if downstream else '—'} |"
+        )
+        details_blocks.append(
+            f"<details>\n<summary><code>{model_name}</code> — DELETED</summary>\n\n"
+            "**🔴 HIGH** — Model removed from the project. All downstream consumers of this model will break.\n\n"
+            "</details>\n"
+        )
 
     for result in results:
         model_name = result.get("model_name", "unknown")
@@ -135,12 +150,18 @@ def format_comment(response: dict, manifest: dict, sha: str = "") -> str:
             )
 
     sha_suffix = f" · `{sha[:7]}`" if sha else ""
+    # New models — INFO, no base to compare
+    for model_name in new_models:
+        table_rows.append(
+            f"| `{model_name}` | — | — | — | ℹ️ NEW | — |"
+        )
+
     header = (
         f"{MARKER}\n"
         f"## 🔍 Semantic SQL Risk Check{sha_suffix}\n\n"
     )
 
-    if not results:
+    if not results and not new_models and not deleted_models:
         return (
             f"{header}"
             "No SQL model changes were analyzed.\n"
@@ -155,7 +176,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "") -> str:
 
     details_section = "\n".join(details_blocks) + "\n" if details_blocks else ""
 
-    # Footer
+    # Footer — deleted models count as HIGH
     total_medium = sum(len(r.get("medium", [])) for r in results)
     total_low = sum(len(r.get("low", [])) for r in results)
 
@@ -227,6 +248,7 @@ def main():
     parser.add_argument("--repo", required=True, help="owner/repo string")
     parser.add_argument("--pr", required=True, type=int, help="PR number")
     parser.add_argument("--sha", default="", help="HEAD commit SHA (optional, shown in comment header)")
+    parser.add_argument("--skipped", default=None, help="Path to skipped models JSON (new/deleted)")
     args = parser.parse_args()
 
     with open(args.response) as f:
@@ -234,7 +256,15 @@ def main():
     with open(args.manifest) as f:
         manifest = json.load(f)
 
-    body = format_comment(response, manifest, sha=args.sha)
+    skipped = {}
+    if args.skipped:
+        try:
+            with open(args.skipped) as f:
+                skipped = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass  # skipped file is optional — missing is fine
+
+    body = format_comment(response, manifest, sha=args.sha, skipped=skipped)
     post_or_update_comment(body, args.token, args.repo, args.pr)
 
 

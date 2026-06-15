@@ -99,6 +99,7 @@ runs:
           --head-dir /tmp/sre_head_compiled \
           --manifest /tmp/sre_manifest.json \
           --dialect ${{ inputs.dialect }} \
+          --skipped /tmp/sre_skipped_models.json \
           > /tmp/sre_payload.json
 
         echo "=== Payload ==="
@@ -120,7 +121,8 @@ runs:
           --token ${{ github.token }} \
           --repo ${{ github.repository }} \
           --pr ${{ github.event.pull_request.number }} \
-          --sha $SRE_HEAD_REF
+          --sha $SRE_HEAD_REF \
+          --skipped /tmp/sre_skipped_models.json
 
     - name: Skip — no SQL model changes
       if: env.SRE_NO_CHANGES == 'true'
