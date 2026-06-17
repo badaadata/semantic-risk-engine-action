@@ -93,6 +93,8 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
             "</details>\n"
         )
 
+    clean_models: list[str] = []
+
     for result in results:
         model_name = result.get("model_name", "unknown")
         has_error = result.get("has_error", False)
@@ -119,13 +121,18 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
         def fmt_count(items, level):
             return f"{CHANGE_EMOJI[level]} {len(items)}" if items else "—"
 
-        table_rows.append(
-            f"| `{model_name}` | {fmt_count(high_items, 'high')} | "
-            f"{fmt_count(medium_items, 'medium')} | {fmt_count(low_items, 'low')} | "
-            f"{fmt_count(info_items, 'info')} | {downstream if downstream else '—'} |"
-        )
+        has_any = any([high_items, medium_items, low_items, info_items])
 
-        if any([high_items, medium_items, low_items, info_items]):
+        if has_any:
+            table_rows.append(
+                f"| `{model_name}` | {fmt_count(high_items, 'high')} | "
+                f"{fmt_count(medium_items, 'medium')} | {fmt_count(low_items, 'low')} | "
+                f"{fmt_count(info_items, 'info')} | {downstream if downstream else '—'} |"
+            )
+        else:
+            clean_models.append((model_name, downstream))
+
+        if has_any:
             parts = []
             if high_items:
                 parts.append(f"{len(high_items)} HIGH")
@@ -176,6 +183,17 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
 
     details_section = "\n".join(details_blocks) + "\n" if details_blocks else ""
 
+    clean_section = ""
+    if clean_models:
+        parts = []
+        for m, ds in clean_models:
+            entry = f"`{m}`"
+            if ds:
+                entry += f" ({ds} downstream)"
+            parts.append(entry)
+        names = ", ".join(parts)
+        clean_section = f"✅ **No risk changes detected** in: {names}\n\n"
+
     # Footer — deleted models count as HIGH
     total_medium = sum(len(r.get("medium", [])) for r in results)
     total_low = sum(len(r.get("low", [])) for r in results)
@@ -199,7 +217,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
     else:
         footer = "---\n✅ No significant risk changes detected."
 
-    return header + table + details_section + footer
+    return header + table + details_section + clean_section + footer
 
 
 def _github_request(url: str, method: str, token: str, data=None):
