@@ -159,6 +159,53 @@ def test_update_vs_post_logic():
     assert result is None
 
 
+def test_feedback_footer_rendered():
+    response = _make_response(
+        results=[
+            {
+                "model_name": "fct_revenue",
+                "has_error": False,
+                "error_message": None,
+                "high": [],
+                "medium": [],
+                "low": [],
+                "info": [],
+            }
+        ],
+        models_with_high_risk=0,
+    )
+    comment = format_comment(
+        response, EMPTY_MANIFEST, api_base_url="https://api.badaadata.com"
+    )
+    assert "Was this risk assessment accurate?" in comment
+    assert "https://api.badaadata.com/feedback/test-uuid?vote=up" in comment
+    assert "https://api.badaadata.com/feedback/test-uuid?vote=down" in comment
+    assert "https://api.badaadata.com/feedback/test-uuid" in comment
+
+
+def test_feedback_footer_strips_v1_suffix():
+    response = _make_response(results=[], models_with_high_risk=0)
+    # Simulate caller accidentally passing the full /v1 path as base URL
+    comment = format_comment(
+        response, EMPTY_MANIFEST, api_base_url="https://api.badaadata.com/v1"
+    )
+    assert "https://api.badaadata.com/feedback/test-uuid" in comment
+    assert "/v1/feedback/" not in comment
+
+
+def test_feedback_footer_absent_without_request_id():
+    response = {
+        "dialect": "snowflake",
+        "total_models": 0,
+        "models_with_high_risk": 0,
+        "results": [],
+    }
+    comment = format_comment(
+        response, EMPTY_MANIFEST, api_base_url="https://api.badaadata.com"
+    )
+    assert "Was this risk assessment accurate?" not in comment
+
+
 def test_build_downstream_map():
     manifest = {
         "child_map": {

@@ -68,14 +68,26 @@ def _format_severity_block(label: str, items: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict | None = None) -> str:
+def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict | None = None, api_base_url: str = "") -> str:
     downstream_map = _build_downstream_map(manifest)
     results = response.get("results", [])
+    request_id = response.get("request_id", "")
     skipped = skipped or {}
     new_models = skipped.get("new", [])
     deleted_models = skipped.get("deleted", [])
 
     total_high = response.get("models_with_high_risk", 0) + len(deleted_models)
+
+    feedback_footer = ""
+    if request_id and api_base_url:
+        base = api_base_url.rstrip("/").removesuffix("/v1")
+        feedback_footer = (
+            "\n\n---\n"
+            "**Was this risk assessment accurate?**  \n"
+            f"[👍 Yes]({base}/feedback/{request_id}?vote=up) · "
+            f"[👎 No]({base}/feedback/{request_id}?vote=down) · "
+            f"[💬 Leave a comment]({base}/feedback/{request_id})"
+        )
 
     # Build summary table rows
     table_rows = []
@@ -169,10 +181,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
     )
 
     if not results and not new_models and not deleted_models:
-        return (
-            f"{header}"
-            "No SQL model changes were analyzed.\n"
-        )
+        return f"{header}No SQL model changes were analyzed.\n" + feedback_footer
 
     table = (
         "| Model | 🔴 HIGH | 🟡 MEDIUM | 🟢 LOW | ℹ️ INFO | Downstream |\n"
@@ -217,7 +226,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
     else:
         footer = "---\n✅ No significant risk changes detected."
 
-    return header + table + details_section + clean_section + footer
+    return header + table + details_section + clean_section + footer + feedback_footer
 
 
 def _github_request(url: str, method: str, token: str, data=None):
@@ -267,6 +276,7 @@ def main():
     parser.add_argument("--pr", required=True, type=int, help="PR number")
     parser.add_argument("--sha", default="", help="HEAD commit SHA (optional, shown in comment header)")
     parser.add_argument("--skipped", default=None, help="Path to skipped models JSON (new/deleted)")
+    parser.add_argument("--api-base-url", default="", help="API base URL (used to build feedback footer links)")
     args = parser.parse_args()
 
     with open(args.response) as f:
@@ -282,7 +292,7 @@ def main():
         except (FileNotFoundError, json.JSONDecodeError):
             pass  # skipped file is optional — missing is fine
 
-    body = format_comment(response, manifest, sha=args.sha, skipped=skipped)
+    body = format_comment(response, manifest, sha=args.sha, skipped=skipped, api_base_url=args.api_base_url)
     post_or_update_comment(body, args.token, args.repo, args.pr)
 
 

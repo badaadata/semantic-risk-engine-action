@@ -122,7 +122,8 @@ runs:
           --repo ${{ github.repository }} \
           --pr ${{ github.event.pull_request.number }} \
           --sha $SRE_HEAD_REF \
-          --skipped /tmp/sre_skipped_models.json
+          --skipped /tmp/sre_skipped_models.json \
+          --api-base-url ${{ inputs.api_base_url }}
 
     - name: Skip — no SQL model changes
       if: env.SRE_NO_CHANGES == 'true'
