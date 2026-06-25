@@ -24,6 +24,9 @@ def build_payload(
     manifest_file: str,
     dialect: str,
     skipped_file: str | None = None,
+    pr_url: str | None = None,
+    repo: str | None = None,
+    pr_number: int | None = None,
 ) -> dict:
     changed_path = Path(changed_file)
     base = Path(base_dir)
@@ -75,7 +78,17 @@ def build_payload(
             json.dumps({"new": new_models, "deleted": deleted_models}, indent=2)
         )
 
-    return {"models": models, "dialect": dialect}
+    payload: dict = {"models": models, "dialect": dialect}
+    # PR context — lets the API store the verdict's origin and build a host-correct
+    # "back to your pull request" link (works for github.com AND GitHub Enterprise,
+    # since pr_url is the PR's full html_url passed from the Action context).
+    if pr_url:
+        payload["pr_url"] = pr_url
+    if repo:
+        payload["repo"] = repo
+    if pr_number is not None:
+        payload["pr_number"] = pr_number
+    return payload
 
 
 def main():
@@ -86,11 +99,17 @@ def main():
     parser.add_argument("--manifest", required=True, help="Path to manifest.json")
     parser.add_argument("--dialect", required=True, help="SQL dialect (snowflake, bigquery, etc.)")
     parser.add_argument("--skipped", default=None, help="Path to write new/deleted model names JSON")
+    parser.add_argument("--pr-url", default="", help="PR html_url (from github.event.pull_request.html_url)")
+    parser.add_argument("--repo", default="", help="owner/repo (from github.repository)")
+    parser.add_argument("--pr-number", default="", help="PR number (from github.event.pull_request.number)")
     args = parser.parse_args()
 
     payload = build_payload(
         args.changed, args.base_dir, args.head_dir, args.manifest, args.dialect,
         skipped_file=args.skipped,
+        pr_url=args.pr_url or None,
+        repo=args.repo or None,
+        pr_number=int(args.pr_number) if args.pr_number else None,
     )
     print(json.dumps(payload, indent=2))
 

@@ -100,6 +100,9 @@ runs:
           --manifest /tmp/sre_manifest.json \
           --dialect ${{ inputs.dialect }} \
           --skipped /tmp/sre_skipped_models.json \
+          --pr-url "${{ github.event.pull_request.html_url }}" \
+          --repo "${{ github.repository }}" \
+          --pr-number "${{ github.event.pull_request.number }}" \
           > /tmp/sre_payload.json
 
         echo "=== Payload ==="

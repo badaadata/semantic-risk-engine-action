@@ -125,3 +125,31 @@ def test_non_sql_lines_ignored(tmp_path):
     payload = build_payload(str(changed_file), str(base_dir), str(head_dir), str(manifest_file), "duckdb")
 
     assert payload["models"] == []
+
+
+def test_pr_context_included_when_provided(tmp_path):
+    base_dir, head_dir, manifest_file = _make_structure(tmp_path, base_sql="SELECT 1", head_sql="SELECT 2")
+    changed_file = _write_changed(tmp_path, ["models/marts/fct_revenue.sql"])
+
+    # Enterprise host URL passes through verbatim (no github.com hardcoding).
+    payload = build_payload(
+        str(changed_file), str(base_dir), str(head_dir), str(manifest_file), "snowflake",
+        pr_url="https://github.mycompany.com/acme/dbt/pull/42",
+        repo="acme/dbt",
+        pr_number=42,
+    )
+
+    assert payload["pr_url"] == "https://github.mycompany.com/acme/dbt/pull/42"
+    assert payload["repo"] == "acme/dbt"
+    assert payload["pr_number"] == 42
+
+
+def test_pr_context_omitted_when_absent(tmp_path):
+    base_dir, head_dir, manifest_file = _make_structure(tmp_path, base_sql="SELECT 1", head_sql="SELECT 2")
+    changed_file = _write_changed(tmp_path, ["models/marts/fct_revenue.sql"])
+
+    payload = build_payload(str(changed_file), str(base_dir), str(head_dir), str(manifest_file), "snowflake")
+
+    assert "pr_url" not in payload
+    assert "repo" not in payload
+    assert "pr_number" not in payload
