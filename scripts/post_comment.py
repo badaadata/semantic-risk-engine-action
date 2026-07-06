@@ -112,12 +112,13 @@ def _downstream_details_block(model_name: str, downstream_names_map: dict) -> st
 
 def _model_cell(model_name: str, criticality_map: dict) -> str:
     if criticality_map.get(model_name):
-        return f"⭐ `{model_name}`"
+        return f"🔴 `{model_name}`"
     return f"`{model_name}`"
 
 
-def _has_risk(result: dict) -> bool:
-    return any(result.get(level) for level in ("high", "medium", "low", "info"))
+def _has_impactful_risk(result: dict) -> bool:
+    """HIGH, MEDIUM, or LOW risk — excludes info-only changes (cosmetic)."""
+    return any(result.get(level) for level in ("high", "medium", "low"))
 
 
 def _format_severity_block(label: str, items: list) -> str:
@@ -151,7 +152,9 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
     # Critical models with a risk change are surfaced first.
     results = sorted(
         results,
-        key=lambda r: 0 if criticality_map.get(r.get("model_name")) and _has_risk(r) else 1,
+        key=lambda r: (
+            0 if criticality_map.get(r.get("model_name")) and _has_impactful_risk(r) else 1
+        ),
     )
     request_id = response.get("request_id", "")
     skipped = skipped or {}
@@ -184,7 +187,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
         )
         critical_badge = ""
         if criticality_map.get(model_name):
-            critical_badge = " · **⭐ MODEL MARKED AS CRITICAL**"
+            critical_badge = " · **🔴 MODEL MARKED AS CRITICAL**"
         details_blocks.append(
             f"<details>\n<summary><code>{model_name}</code> — DELETED{critical_badge}</summary>\n\n"
             "**🔴 HIGH** — Model removed from the project. All downstream consumers of this model will break.\n"
@@ -206,7 +209,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
             )
             critical_badge = ""
             if criticality_map.get(model_name):
-                critical_badge = " · **⭐ MODEL MARKED AS CRITICAL**"
+                critical_badge = " · **🔴 MODEL MARKED AS CRITICAL**"
             details_blocks.append(
                 f"<details>\n<summary><code>{model_name}</code> — COMPILE ERROR{critical_badge}</summary>\n\n"
                 f"```\n{error_msg}\n```\n"
@@ -247,7 +250,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
                 parts.append(f"{len(info_items)} INFO")
             summary_line = ", ".join(parts)
             if criticality_map.get(model_name):
-                summary_line += " · **⭐ MODEL MARKED AS CRITICAL**"
+                summary_line += " · **🔴 MODEL MARKED AS CRITICAL**"
 
             detail_body = ""
             for level in ("high", "medium", "low", "info"):
@@ -266,7 +269,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
     # New models — INFO, no base to compare
     for model_name in new_models:
         table_rows.append(
-            f"| `{model_name}` | — | — | — | ℹ️ NEW | — |"
+            f"| {_model_cell(model_name, criticality_map)} | — | — | — | ℹ️ NEW | — |"
         )
 
     header = (
@@ -322,7 +325,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
 
     critical_affected = [
         r.get("model_name", "") for r in results
-        if criticality_map.get(r.get("model_name")) and _has_risk(r)
+        if criticality_map.get(r.get("model_name")) and _has_impactful_risk(r)
     ] + [m for m in deleted_models if criticality_map.get(m)]
     if critical_affected:
         names = ", ".join(f"`{m}`" for m in critical_affected)

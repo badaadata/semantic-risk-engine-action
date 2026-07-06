@@ -408,3 +408,91 @@ def test_critical_model_without_risk_change_no_footer_alert():
     comment = format_comment(response, manifest)
 
     assert "Critical model(s) affected" not in comment
+
+
+def _info_result(model_name: str) -> dict:
+    return {
+        "model_name": model_name,
+        "has_error": False,
+        "error_message": None,
+        "high": [],
+        "medium": [],
+        "low": [],
+        "info": [
+            {
+                "entity": "TABLE",
+                "change_type": "ADDED",
+                "identifier": "TABLE_0",
+                "severity": "INFO",
+                "reason": "Test reason.",
+                "old_value": None,
+                "new_value": "orders",
+            }
+        ],
+    }
+
+
+def test_info_only_change_on_critical_model_no_alert():
+    """INFO-only changes are cosmetic and should not trigger the critical alert."""
+    manifest = _critical_manifest("config_meta", model_name="fct_revenue")
+    response = _make_response(results=[_info_result("fct_revenue")], models_with_high_risk=0)
+    comment = format_comment(response, manifest)
+
+    assert "Critical model(s) affected" not in comment
+
+
+def test_info_only_critical_model_not_forced_to_top():
+    """An INFO-only critical model isn't force-sorted ahead of a HIGH non-critical model.
+
+    Previously any risk (including info-only) on a critical model pulled it to the
+    front of the sort. With calibration, only HIGH/MEDIUM/LOW does that, so the
+    original (stable-sort) ordering between two tier-1 results is preserved here.
+    """
+    manifest = {
+        "metadata": {"project_name": "my_project"},
+        "nodes": {
+            "model.my_project.zzz_normal": {
+                "name": "zzz_normal",
+                "config": {},
+                "meta": {},
+                "tags": [],
+            },
+            "model.my_project.fct_revenue": {
+                "name": "fct_revenue",
+                "config": {"meta": {"semantic_risk_critical": True}},
+                "meta": {},
+                "tags": [],
+            },
+        },
+        "child_map": {},
+    }
+    response = _make_response(
+        results=[_high_result("zzz_normal"), _info_result("fct_revenue")],
+        models_with_high_risk=1,
+    )
+    comment = format_comment(response, manifest)
+
+    assert comment.index("zzz_normal") < comment.index("fct_revenue")
+
+
+def test_critical_marker_in_table_row():
+    """The critical badge appears specifically on the model's summary-table row."""
+    manifest = _critical_manifest("config_meta", model_name="fct_revenue")
+    response = _make_response(results=[_high_result("fct_revenue")], models_with_high_risk=1)
+    comment = format_comment(response, manifest)
+
+    table_row = next(
+        line for line in comment.splitlines() if line.startswith("| ") and "fct_revenue" in line
+    )
+    assert "🔴" in table_row
+
+
+def test_deleted_critical_model_triggers_alert():
+    """A deleted critical model (via skipped=deleted) still triggers the footer alert."""
+    manifest = _critical_manifest("config_meta", model_name="fct_revenue")
+    response = _make_response(results=[], models_with_high_risk=0)
+    comment = format_comment(response, manifest, skipped={"deleted": ["fct_revenue"]})
+
+    assert "DELETED" in comment
+    assert "Critical model(s) affected" in comment
+    assert "fct_revenue" in comment
