@@ -45,6 +45,81 @@ def _build_downstream_map(manifest: dict) -> dict:
     return counts
 
 
+def _build_downstream_names_map(manifest: dict) -> dict:
+    """BFS over child_map to collect downstream model bare names per model."""
+    child_map = manifest.get("child_map", {})
+    names_map = {}
+
+    for node_key in child_map:
+        if not node_key.startswith("model."):
+            continue
+        model_name = node_key.split(".")[-1]
+        visited = set()
+        queue = deque([node_key])
+        while queue:
+            current = queue.popleft()
+            for child in child_map.get(current, []):
+                if child not in visited and child.startswith("model."):
+                    visited.add(child)
+                    queue.append(child)
+        names_map[model_name] = sorted(child.split(".")[-1] for child in visited)
+
+    return names_map
+
+
+def _build_criticality_map(manifest: dict) -> dict:
+    """Return {bare_model_name: True} for every model flagged semantic_risk_critical.
+
+    Tolerant of placement differences across dbt versions: config.meta, node.meta,
+    node.tags, and config.tags are all checked.
+    """
+    nodes = manifest.get("nodes", {})
+    critical = {}
+
+    for node_key, node in nodes.items():
+        if not node_key.startswith("model."):
+            continue
+        model_name = node.get("name") or node_key.split(".")[-1]
+
+        config = node.get("config") or {}
+        config_meta = config.get("meta") or {}
+        meta = node.get("meta") or {}
+        tags = node.get("tags") or []
+        config_tags = config.get("tags") or []
+
+        is_critical = (
+            bool(config_meta.get("semantic_risk_critical"))
+            or bool(meta.get("semantic_risk_critical"))
+            or "semantic_risk_critical" in tags
+            or "semantic_risk_critical" in config_tags
+        )
+        if is_critical:
+            critical[model_name] = True
+
+    return critical
+
+
+def _downstream_details_block(model_name: str, downstream_names_map: dict) -> str:
+    names = downstream_names_map.get(model_name, [])
+    if not names:
+        return ""
+    names_list = "\n".join(f"- `{n}`" for n in names)
+    return (
+        f"\n<details>\n<summary>{len(names)} downstream model(s) may be affected</summary>\n\n"
+        f"{names_list}\n\n</details>\n"
+    )
+
+
+def _model_cell(model_name: str, criticality_map: dict) -> str:
+    if criticality_map.get(model_name):
+        return f"⭐ `{model_name}`"
+    return f"`{model_name}`"
+
+
+def _has_risk(result: dict) -> bool:
+    return any(result.get(level) for level in ("high", "medium", "low", "info"))
+
+
 def _format_severity_block(label: str, items: list) -> str:
     if not items:
         return ""
@@ -70,7 +145,14 @@ def _format_severity_block(label: str, items: list) -> str:
 
 def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict | None = None, api_base_url: str = "") -> str:
     downstream_map = _build_downstream_map(manifest)
+    downstream_names_map = _build_downstream_names_map(manifest)
+    criticality_map = _build_criticality_map(manifest)
     results = response.get("results", [])
+    # Critical models with a risk change are surfaced first.
+    results = sorted(
+        results,
+        key=lambda r: 0 if criticality_map.get(r.get("model_name")) and _has_risk(r) else 1,
+    )
     request_id = response.get("request_id", "")
     skipped = skipped or {}
     new_models = skipped.get("new", [])
@@ -97,12 +179,16 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
     for model_name in deleted_models:
         downstream = downstream_map.get(model_name, 0)
         table_rows.append(
-            f"| `{model_name}` | 🔴 DELETED | — | — | — | {downstream if downstream else '—'} |"
+            f"| {_model_cell(model_name, criticality_map)} | 🔴 DELETED | — | — | — | "
+            f"{downstream if downstream else '—'} |"
         )
+        critical_badge = ""
+        if criticality_map.get(model_name):
+            critical_badge = " · **⭐ MODEL MARKED AS CRITICAL**"
         details_blocks.append(
-            f"<details>\n<summary><code>{model_name}</code> — DELETED</summary>\n\n"
-            "**🔴 HIGH** — Model removed from the project. All downstream consumers of this model will break.\n\n"
-            "</details>\n"
+            f"<details>\n<summary><code>{model_name}</code> — DELETED{critical_badge}</summary>\n\n"
+            "**🔴 HIGH** — Model removed from the project. All downstream consumers of this model will break.\n"
+            f"{_downstream_details_block(model_name, downstream_names_map)}\n</details>\n"
         )
 
     clean_models: list[str] = []
@@ -115,11 +201,16 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
         if has_error:
             downstream = downstream_map.get(model_name, 0)
             table_rows.append(
-                f"| `{model_name}` | COMPILE ERROR | — | — | — | {downstream if downstream else '—'} |"
+                f"| {_model_cell(model_name, criticality_map)} | COMPILE ERROR | — | — | — | "
+                f"{downstream if downstream else '—'} |"
             )
+            critical_badge = ""
+            if criticality_map.get(model_name):
+                critical_badge = " · **⭐ MODEL MARKED AS CRITICAL**"
             details_blocks.append(
-                f"<details>\n<summary><code>{model_name}</code> — COMPILE ERROR</summary>\n\n"
-                f"```\n{error_msg}\n```\n\n</details>\n"
+                f"<details>\n<summary><code>{model_name}</code> — COMPILE ERROR{critical_badge}</summary>\n\n"
+                f"```\n{error_msg}\n```\n"
+                f"{_downstream_details_block(model_name, downstream_names_map)}\n</details>\n"
             )
             continue
 
@@ -137,7 +228,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
 
         if has_any:
             table_rows.append(
-                f"| `{model_name}` | {fmt_count(high_items, 'high')} | "
+                f"| {_model_cell(model_name, criticality_map)} | {fmt_count(high_items, 'high')} | "
                 f"{fmt_count(medium_items, 'medium')} | {fmt_count(low_items, 'low')} | "
                 f"{fmt_count(info_items, 'info')} | {downstream if downstream else '—'} |"
             )
@@ -155,6 +246,8 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
             if info_items:
                 parts.append(f"{len(info_items)} INFO")
             summary_line = ", ".join(parts)
+            if criticality_map.get(model_name):
+                summary_line += " · **⭐ MODEL MARKED AS CRITICAL**"
 
             detail_body = ""
             for level in ("high", "medium", "low", "info"):
@@ -165,7 +258,8 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
 
             details_blocks.append(
                 f"<details>\n<summary><code>{model_name}</code> — {summary_line}</summary>\n\n"
-                f"{detail_body}</details>\n"
+                f"{detail_body}{_downstream_details_block(model_name, downstream_names_map)}"
+                "</details>\n"
             )
 
     sha_suffix = f" · `{sha[:7]}`" if sha else ""
@@ -225,6 +319,14 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
         footer = "---\n🟡 **No high-risk changes, but medium/low-risk changes detected. Review recommended.**"
     else:
         footer = "---\n✅ No significant risk changes detected."
+
+    critical_affected = [
+        r.get("model_name", "") for r in results
+        if criticality_map.get(r.get("model_name")) and _has_risk(r)
+    ] + [m for m in deleted_models if criticality_map.get(m)]
+    if critical_affected:
+        names = ", ".join(f"`{m}`" for m in critical_affected)
+        footer += f"\n🔴 **Critical model(s) affected:** {names}. Review before merging."
 
     return header + table + details_section + clean_section + footer + feedback_footer
 

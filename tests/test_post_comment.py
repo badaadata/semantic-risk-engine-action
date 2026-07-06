@@ -8,7 +8,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.post_comment import (
     MARKER,
+    _build_criticality_map,
     _build_downstream_map,
+    _build_downstream_names_map,
     find_existing_comment,
     format_comment,
 )
@@ -222,3 +224,187 @@ def test_build_downstream_map():
     assert dm["c"] == 0
     assert dm["d"] == 0
     assert "some_test" not in dm
+
+
+def test_build_downstream_names_map():
+    manifest = {
+        "child_map": {
+            "model.proj.fct_revenue": ["model.proj.rpt_b", "model.proj.rpt_a"],
+            "model.proj.rpt_a": ["model.proj.dash_x"],
+            "model.proj.rpt_b": [],
+            "model.proj.dash_x": [],
+            "test.proj.some_test": ["model.proj.fct_revenue"],
+        }
+    }
+    names = _build_downstream_names_map(manifest)
+    assert names["fct_revenue"] == ["dash_x", "rpt_a", "rpt_b"]
+    assert names["rpt_a"] == ["dash_x"]
+    assert names["rpt_b"] == []
+    assert "some_test" not in names
+
+
+def _critical_manifest(placement: str, model_name: str = "fct_revenue") -> dict:
+    """Build a manifest with a single model flagged critical via the given placement."""
+    node = {"name": model_name, "config": {}, "meta": {}, "tags": []}
+    if placement == "config_meta":
+        node["config"] = {"meta": {"semantic_risk_critical": True}}
+    elif placement == "node_meta":
+        node["meta"] = {"semantic_risk_critical": True}
+    elif placement == "config_tags":
+        node["config"] = {"tags": ["semantic_risk_critical"]}
+    elif placement == "node_tags":
+        node["tags"] = ["semantic_risk_critical"]
+    return {
+        "metadata": {"project_name": "my_project"},
+        "nodes": {f"model.my_project.{model_name}": node},
+        "child_map": {},
+    }
+
+
+@pytest.mark.parametrize(
+    "placement", ["config_meta", "node_meta", "config_tags", "node_tags"]
+)
+def test_build_criticality_map_detects_each_placement(placement):
+    manifest = _critical_manifest(placement)
+    critical = _build_criticality_map(manifest)
+    assert critical.get("fct_revenue") is True
+
+
+def test_build_criticality_map_not_flagged():
+    manifest = {
+        "metadata": {"project_name": "my_project"},
+        "nodes": {
+            "model.my_project.fct_revenue": {
+                "name": "fct_revenue",
+                "config": {},
+                "meta": {},
+                "tags": [],
+            }
+        },
+        "child_map": {},
+    }
+    critical = _build_criticality_map(manifest)
+    assert "fct_revenue" not in critical
+
+
+def _high_result(model_name: str) -> dict:
+    return {
+        "model_name": model_name,
+        "has_error": False,
+        "error_message": None,
+        "high": [
+            {
+                "entity": "FILTER",
+                "change_type": "REMOVED",
+                "identifier": "WHERE:status",
+                "severity": "HIGH",
+                "reason": "A WHERE filter was removed.",
+                "old_value": "status = 'active'",
+                "new_value": None,
+            }
+        ],
+        "medium": [],
+        "low": [],
+        "info": [],
+    }
+
+
+def _clean_result(model_name: str) -> dict:
+    return {
+        "model_name": model_name,
+        "has_error": False,
+        "error_message": None,
+        "high": [],
+        "medium": [],
+        "low": [],
+        "info": [],
+    }
+
+
+def test_critical_model_badge_and_footer_alert():
+    manifest = _critical_manifest("config_meta", model_name="fct_revenue")
+    response = _make_response(results=[_high_result("fct_revenue")], models_with_high_risk=1)
+    comment = format_comment(response, manifest)
+
+    assert "MODEL MARKED AS CRITICAL" in comment
+    assert "Critical model(s) affected" in comment
+    assert "fct_revenue" in comment
+
+
+def test_uncritical_model_has_no_criticality_signals():
+    manifest = {
+        "metadata": {"project_name": "my_project"},
+        "nodes": {
+            "model.my_project.fct_revenue": {
+                "name": "fct_revenue",
+                "config": {},
+                "meta": {},
+                "tags": [],
+            }
+        },
+        "child_map": {},
+    }
+    response = _make_response(results=[_high_result("fct_revenue")], models_with_high_risk=1)
+    comment = format_comment(response, manifest)
+
+    assert "MODEL MARKED AS CRITICAL" not in comment
+    assert "Critical model(s) affected" not in comment
+
+
+def test_critical_model_with_risk_sorted_above_noncritical():
+    manifest = {
+        "metadata": {"project_name": "my_project"},
+        "nodes": {
+            "model.my_project.zzz_normal": {
+                "name": "zzz_normal",
+                "config": {},
+                "meta": {},
+                "tags": [],
+            },
+            "model.my_project.fct_revenue": {
+                "name": "fct_revenue",
+                "config": {"meta": {"semantic_risk_critical": True}},
+                "meta": {},
+                "tags": [],
+            },
+        },
+        "child_map": {},
+    }
+    # Non-critical model listed first in the API response; critical model should
+    # still be sorted to the top of the rendered comment.
+    response = _make_response(
+        results=[_high_result("zzz_normal"), _high_result("fct_revenue")],
+        models_with_high_risk=2,
+    )
+    comment = format_comment(response, manifest)
+
+    assert comment.index("fct_revenue") < comment.index("zzz_normal")
+
+
+def test_downstream_names_appear_in_rendered_comment():
+    manifest = {
+        "metadata": {"project_name": "my_project"},
+        "nodes": {},
+        "child_map": {
+            "model.my_project.fct_revenue": [
+                "model.my_project.rpt_a",
+                "model.my_project.rpt_b",
+            ],
+            "model.my_project.rpt_a": [],
+            "model.my_project.rpt_b": [],
+        },
+    }
+    response = _make_response(results=[_high_result("fct_revenue")], models_with_high_risk=1)
+    comment = format_comment(response, manifest)
+
+    assert "downstream model(s) may be affected" in comment
+    assert "rpt_a" in comment
+    assert "rpt_b" in comment
+
+
+def test_critical_model_without_risk_change_no_footer_alert():
+    manifest = _critical_manifest("config_meta", model_name="fct_revenue")
+    response = _make_response(results=[_clean_result("fct_revenue")], models_with_high_risk=0)
+    comment = format_comment(response, manifest)
+
+    assert "Critical model(s) affected" not in comment
