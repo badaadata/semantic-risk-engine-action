@@ -25,6 +25,13 @@ def call_api(payload_path: str, api_url: str, api_key: str) -> dict:
     Success: {"ok": True, "body": <raw response text>}
     Failure: {"ok": False, "message": <human-readable reason>, "annotation": "error"|"warning"}
     """
+    if not api_url.startswith("https://"):
+        return {
+            "ok": False,
+            "message": f"refusing to send analysis data to a non-HTTPS endpoint: {api_url}",
+            "annotation": "error",
+        }
+
     with open(payload_path, "rb") as f:
         body = f.read()
 

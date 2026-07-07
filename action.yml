@@ -19,7 +19,7 @@ inputs:
     required: false
     default: ci
   api_base_url:
-    description: "Base URL for the Semantic Risk Engine API (override for local/ngrok testing)"
+    description: "Advanced: base URL for the Semantic Risk Engine API (override for local/ngrok testing). Must be https:// — non-HTTPS URLs are rejected."
     required: false
     default: "https://api.badaadata.com"
   debug:

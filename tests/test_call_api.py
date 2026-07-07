@@ -25,6 +25,18 @@ def test_call_api_success(tmp_path):
     assert result == {"ok": True, "body": '{"results": []}'}
 
 
+def test_call_api_rejects_non_https_endpoint(tmp_path):
+    payload_file = _write_payload(tmp_path)
+
+    with patch("scripts.call_api.urllib.request.urlopen") as mock_urlopen:
+        result = call_api(str(payload_file), "http://api.example.com/v1/analyze", "sre_test")
+
+    mock_urlopen.assert_not_called()  # must not even attempt the request
+    assert result["ok"] is False
+    assert result["annotation"] == "error"
+    assert "non-HTTPS" in result["message"]
+
+
 def test_call_api_auth_error_is_misconfiguration(tmp_path):
     payload_file = _write_payload(tmp_path)
     err = urllib.error.HTTPError(

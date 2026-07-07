@@ -131,6 +131,15 @@ are listed in the comment.
   compiled SQL to the workflow log, full stop. Setting `debug: true` prints model names and
   SQL *sizes* only, for troubleshooting — never SQL content.
 
+## Advanced: `api_base_url`
+
+Most users never set this — it defaults to `https://api.badaadata.com`. It exists for
+pointing the action at a local/ngrok tunnel during engine development. The action refuses
+to send analysis data to anything that isn't `https://`, so this can't be used to
+accidentally (or maliciously, via an edited workflow file) exfiltrate compiled SQL to a
+plaintext endpoint. Treat any override to this input in a workflow file with the same
+scrutiny you'd give a change to the API key itself.
+
 ## What it does NOT do
 
 It analyzes SQL structure, not your data — it tells you a change *could* alter results,
