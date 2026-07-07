@@ -32,8 +32,10 @@ runs:
   steps:
     - name: Find changed SQL models
       shell: bash
+      env:
+        SRE_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: |
-        git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD -- 'models/' \
+        git diff --name-only "origin/$SRE_BASE_REF...HEAD" -- 'models/' \
           | grep '\.sql$' > /tmp/sre_changed_models.txt || true
 
         echo "Changed models:"
@@ -46,6 +48,9 @@ runs:
     - name: Compile PR branch (HEAD)
       if: env.SRE_NO_CHANGES != 'true'
       shell: bash
+      env:
+        SRE_DBT_PROFILES_DIR: ${{ inputs.dbt_profiles_dir }}
+        SRE_DBT_TARGET: ${{ inputs.dbt_target }}
       run: |
         echo "SRE_HEAD_REF=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
@@ -56,12 +61,12 @@ runs:
 
         dbt compile \
             --select $SELECTORS \
-            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
-            --target ${{ inputs.dbt_target }} \
+            --profiles-dir "$SRE_DBT_PROFILES_DIR" \
+            --target "$SRE_DBT_TARGET" \
           || dbt compile \
             --select $SELECTORS \
-            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
-            --target ${{ inputs.dbt_target }} \
+            --profiles-dir "$SRE_DBT_PROFILES_DIR" \
+            --target "$SRE_DBT_TARGET" \
             --empty \
           || echo "PR-branch compile failed — continuing in shadow mode"
 
@@ -76,8 +81,12 @@ runs:
     - name: Compile base branch
       if: env.SRE_NO_CHANGES != 'true' && env.SRE_COMPILE_FAILED != 'true'
       shell: bash
+      env:
+        SRE_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        SRE_DBT_PROFILES_DIR: ${{ inputs.dbt_profiles_dir }}
+        SRE_DBT_TARGET: ${{ inputs.dbt_target }}
       run: |
-        git checkout origin/${{ github.event.pull_request.base.ref }}
+        git checkout "origin/$SRE_BASE_REF"
 
         SELECTORS=$(cat /tmp/sre_changed_models.txt \
           | xargs -I{} basename {} .sql \
@@ -85,12 +94,12 @@ runs:
 
         dbt compile \
             --select $SELECTORS \
-            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
-            --target ${{ inputs.dbt_target }} \
+            --profiles-dir "$SRE_DBT_PROFILES_DIR" \
+            --target "$SRE_DBT_TARGET" \
           || dbt compile \
             --select $SELECTORS \
-            --profiles-dir ${{ inputs.dbt_profiles_dir }} \
-            --target ${{ inputs.dbt_target }} \
+            --profiles-dir "$SRE_DBT_PROFILES_DIR" \
+            --target "$SRE_DBT_TARGET" \
             --empty \
           || echo "Base compile failed (model may be new) — continuing"
 
@@ -104,23 +113,27 @@ runs:
       shell: bash
       env:
         SRE_API_KEY: ${{ inputs.api_key }}
+        SRE_DIALECT: ${{ inputs.dialect }}
+        SRE_PR_URL: ${{ github.event.pull_request.html_url }}
+        SRE_API_BASE_URL: ${{ inputs.api_base_url }}
+        SRE_DEBUG: ${{ inputs.debug }}
       run: |
         python3 ${{ github.action_path }}/scripts/build_payload.py \
           --changed /tmp/sre_changed_models.txt \
           --base-dir /tmp/sre_base_compiled \
           --head-dir /tmp/sre_head_compiled \
           --manifest /tmp/sre_manifest.json \
-          --dialect ${{ inputs.dialect }} \
+          --dialect "$SRE_DIALECT" \
           --skipped /tmp/sre_skipped_models.json \
-          --pr-url "${{ github.event.pull_request.html_url }}" \
+          --pr-url "$SRE_PR_URL" \
           --repo "${{ github.repository }}" \
           --pr-number "${{ github.event.pull_request.number }}" \
-          --debug ${{ inputs.debug }} \
+          --debug "$SRE_DEBUG" \
           > /tmp/sre_payload.json
 
         python3 ${{ github.action_path }}/scripts/call_api.py \
           --payload /tmp/sre_payload.json \
-          --api-url ${{ inputs.api_base_url }}/v1/analyze \
+          --api-url "$SRE_API_BASE_URL/v1/analyze" \
           > /tmp/sre_response.json
 
     - name: Post PR comment
@@ -128,6 +141,7 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        SRE_API_BASE_URL: ${{ inputs.api_base_url }}
       run: |
         python3 ${{ github.action_path }}/scripts/post_comment.py \
           --response /tmp/sre_response.json \
@@ -136,7 +150,7 @@ runs:
           --pr ${{ github.event.pull_request.number }} \
           --sha $SRE_HEAD_REF \
           --skipped /tmp/sre_skipped_models.json \
-          --api-base-url ${{ inputs.api_base_url }}
+          --api-base-url "$SRE_API_BASE_URL"
 
     - name: Skip — no SQL model changes
       if: env.SRE_NO_CHANGES == 'true'
