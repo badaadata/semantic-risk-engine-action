@@ -17,6 +17,21 @@ def _normalize_for_comparison(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip()
 
 
+def _print_debug_summary(payload: dict) -> None:
+    """Print model names and compiled-SQL sizes to stderr — never the SQL itself.
+
+    Kept off stdout deliberately: stdout is redirected straight into the
+    payload file consumed by call_api.py, so anything printed here must not
+    corrupt that JSON.
+    """
+    print("DEBUG: payload summary (sizes only, no SQL content)", file=sys.stderr)
+    for model in payload.get("models", []):
+        old_len = len(model.get("old_sql", ""))
+        new_len = len(model.get("new_sql", ""))
+        print(f"DEBUG:   {model['model_name']} — old_sql={old_len} chars, new_sql={new_len} chars", file=sys.stderr)
+    print(f"DEBUG: {len(payload.get('models', []))} model(s), dialect={payload.get('dialect')}", file=sys.stderr)
+
+
 def build_payload(
     changed_file: str,
     base_dir: str,
@@ -102,6 +117,7 @@ def main():
     parser.add_argument("--pr-url", default="", help="PR html_url (from github.event.pull_request.html_url)")
     parser.add_argument("--repo", default="", help="owner/repo (from github.repository)")
     parser.add_argument("--pr-number", default="", help="PR number (from github.event.pull_request.number)")
+    parser.add_argument("--debug", default="false", help="If 'true', print model names/sizes (never SQL) to stderr")
     args = parser.parse_args()
 
     payload = build_payload(
@@ -111,6 +127,8 @@ def main():
         repo=args.repo or None,
         pr_number=int(args.pr_number) if args.pr_number else None,
     )
+    if args.debug == "true":
+        _print_debug_summary(payload)
     print(json.dumps(payload, indent=2))
 
 

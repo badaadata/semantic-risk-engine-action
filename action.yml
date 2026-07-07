@@ -22,6 +22,10 @@ inputs:
     description: "Base URL for the Semantic Risk Engine API (override for local/ngrok testing)"
     required: false
     default: "https://api.badaadata.com"
+  debug:
+    description: "Print model names and compiled-SQL sizes to the workflow log for troubleshooting. Never prints SQL content."
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -109,10 +113,8 @@ runs:
           --pr-url "${{ github.event.pull_request.html_url }}" \
           --repo "${{ github.repository }}" \
           --pr-number "${{ github.event.pull_request.number }}" \
+          --debug ${{ inputs.debug }} \
           > /tmp/sre_payload.json
-
-        echo "=== Payload ==="
-        cat /tmp/sre_payload.json
 
         python3 ${{ github.action_path }}/scripts/call_api.py \
           --payload /tmp/sre_payload.json \

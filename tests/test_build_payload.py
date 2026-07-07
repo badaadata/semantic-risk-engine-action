@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from scripts.build_payload import build_payload
+from scripts.build_payload import _print_debug_summary, build_payload
 
 MINIMAL_MANIFEST = {
     "metadata": {"project_name": "my_project"},
@@ -142,6 +142,23 @@ def test_pr_context_included_when_provided(tmp_path):
     assert payload["pr_url"] == "https://github.mycompany.com/acme/dbt/pull/42"
     assert payload["repo"] == "acme/dbt"
     assert payload["pr_number"] == 42
+
+
+def test_debug_summary_never_prints_sql(capsys):
+    secret_sql = "SELECT ssn, credit_card FROM sensitive_pii_table WHERE status = 'active'"
+    payload = {
+        "dialect": "snowflake",
+        "models": [{"model_name": "fct_revenue", "old_sql": secret_sql, "new_sql": secret_sql + " -- v2"}],
+    }
+
+    _print_debug_summary(payload)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""  # nothing on stdout — must not corrupt the payload JSON stream
+    assert "fct_revenue" in captured.err
+    assert "chars" in captured.err
+    assert secret_sql not in captured.err
+    assert "sensitive_pii_table" not in captured.err
 
 
 def test_pr_context_omitted_when_absent(tmp_path):

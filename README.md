@@ -125,6 +125,9 @@ are listed in the comment.
   `env_var()` directly, the *compiled* SQL will contain those resolved values, like any
   system that reads compiled dbt output. Keep secrets out of model logic (standard dbt
   practice) and nothing sensitive can appear.
+- **Is any of this printed to my (possibly public) CI logs?** No. The action never prints
+  compiled SQL to the workflow log, full stop. Setting `debug: true` prints model names and
+  SQL *sizes* only, for troubleshooting — never SQL content.
 
 ## What it does NOT do
 
