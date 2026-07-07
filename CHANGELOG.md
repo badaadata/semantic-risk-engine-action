@@ -8,6 +8,12 @@ history.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-07
+
+Pre-publication hardening pass, driven by an adversarial security/claims/IP/standards
+review before this repo is shared with beta prospects or listed on the Marketplace.
+`v1` now points here.
+
 ### Security
 - Compiled SQL is no longer printed to the workflow log (`echo "=== Payload ===" / cat ...`
   removed). A `debug` input prints model names and SQL sizes only, never SQL content.
