@@ -145,6 +145,16 @@ def _format_severity_block(label: str, items: list) -> str:
 
 
 def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict | None = None, api_base_url: str = "") -> str:
+    if response.get("analysis_failed"):
+        sha_suffix = f" · `{sha[:7]}`" if sha else ""
+        message = response.get("message", "the analysis service was unreachable")
+        return (
+            f"{MARKER}\n"
+            f"## 🔍 Semantic SQL Risk Check{sha_suffix}\n\n"
+            f"⚠️ **Could not complete this analysis run** — {message}\n\n"
+            "This does not block your merge (shadow mode). It will retry on the next push.\n"
+        )
+
     downstream_map = _build_downstream_map(manifest)
     downstream_names_map = _build_downstream_names_map(manifest)
     criticality_map = _build_criticality_map(manifest)

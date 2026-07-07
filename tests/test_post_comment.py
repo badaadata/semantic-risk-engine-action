@@ -487,6 +487,17 @@ def test_critical_marker_in_table_row():
     assert "🔴" in table_row
 
 
+def test_analysis_failed_renders_non_blocking_message():
+    response = {"analysis_failed": True, "message": "cannot reach API: timed out"}
+    comment = format_comment(response, EMPTY_MANIFEST, sha="abc1234567")
+
+    assert MARKER in comment
+    assert "Could not complete this analysis run" in comment
+    assert "cannot reach API: timed out" in comment
+    assert "does not block your merge" in comment
+    assert "abc1234" in comment
+
+
 def test_deleted_critical_model_triggers_alert():
     """A deleted critical model (via skipped=deleted) still triggers the footer alert."""
     manifest = _critical_manifest("config_meta", model_name="fct_revenue")

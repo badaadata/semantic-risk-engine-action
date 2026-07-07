@@ -58,13 +58,19 @@ runs:
             --select $SELECTORS \
             --profiles-dir ${{ inputs.dbt_profiles_dir }} \
             --target ${{ inputs.dbt_target }} \
-            --empty
+            --empty \
+          || echo "PR-branch compile failed — continuing in shadow mode"
 
-        cp -r target/compiled /tmp/sre_head_compiled
-        cp target/manifest.json /tmp/sre_manifest.json
+        if [ -d target/compiled ] && [ -f target/manifest.json ]; then
+          cp -r target/compiled /tmp/sre_head_compiled
+          cp target/manifest.json /tmp/sre_manifest.json
+        else
+          echo "::warning::Semantic Risk Check: dbt compile failed on the PR branch — skipping analysis this run. This does not block your merge."
+          echo "SRE_COMPILE_FAILED=true" >> $GITHUB_ENV
+        fi
 
     - name: Compile base branch
-      if: env.SRE_NO_CHANGES != 'true'
+      if: env.SRE_NO_CHANGES != 'true' && env.SRE_COMPILE_FAILED != 'true'
       shell: bash
       run: |
         git checkout origin/${{ github.event.pull_request.base.ref }}
@@ -90,7 +96,7 @@ runs:
         git checkout $SRE_HEAD_REF
 
     - name: Build payload and call API
-      if: env.SRE_NO_CHANGES != 'true'
+      if: env.SRE_NO_CHANGES != 'true' && env.SRE_COMPILE_FAILED != 'true'
       shell: bash
       run: |
         python3 ${{ github.action_path }}/scripts/build_payload.py \
@@ -115,7 +121,7 @@ runs:
           > /tmp/sre_response.json
 
     - name: Post PR comment
-      if: env.SRE_NO_CHANGES != 'true'
+      if: env.SRE_NO_CHANGES != 'true' && env.SRE_COMPILE_FAILED != 'true'
       shell: bash
       run: |
         python3 ${{ github.action_path }}/scripts/post_comment.py \
