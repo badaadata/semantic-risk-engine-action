@@ -102,6 +102,8 @@ runs:
     - name: Build payload and call API
       if: env.SRE_NO_CHANGES != 'true' && env.SRE_COMPILE_FAILED != 'true'
       shell: bash
+      env:
+        SRE_API_KEY: ${{ inputs.api_key }}
       run: |
         python3 ${{ github.action_path }}/scripts/build_payload.py \
           --changed /tmp/sre_changed_models.txt \
@@ -119,17 +121,17 @@ runs:
         python3 ${{ github.action_path }}/scripts/call_api.py \
           --payload /tmp/sre_payload.json \
           --api-url ${{ inputs.api_base_url }}/v1/analyze \
-          --api-key ${{ inputs.api_key }} \
           > /tmp/sre_response.json
 
     - name: Post PR comment
       if: env.SRE_NO_CHANGES != 'true' && env.SRE_COMPILE_FAILED != 'true'
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         python3 ${{ github.action_path }}/scripts/post_comment.py \
           --response /tmp/sre_response.json \
           --manifest /tmp/sre_manifest.json \
-          --token ${{ github.token }} \
           --repo ${{ github.repository }} \
           --pr ${{ github.event.pull_request.number }} \
           --sha $SRE_HEAD_REF \

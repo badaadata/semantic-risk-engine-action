@@ -8,6 +8,7 @@ JSON object to stdout so downstream steps can detect and report the skip.
 """
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -61,10 +62,17 @@ def main():
     parser = argparse.ArgumentParser(description="POST payload to Semantic Risk Engine API.")
     parser.add_argument("--payload", required=True, help="Path to payload JSON file")
     parser.add_argument("--api-url", required=True, help="Full API URL (e.g. https://api.badaadata.com/v1/analyze)")
-    parser.add_argument("--api-key", required=True, help="API key (sre_...)")
     args = parser.parse_args()
 
-    result = call_api(args.payload, args.api_url, args.api_key)
+    api_key = os.environ.get("SRE_API_KEY", "")
+    if not api_key:
+        # Fork PRs never receive repo secrets — this is expected, not a bug.
+        message = "SRE_API_KEY is empty — check the api_key input is set to a repo secret (fork PRs don't receive it, by design)."
+        print(f"::error::Semantic Risk Check: {message}", file=sys.stderr)
+        print(json.dumps({"analysis_failed": True, "message": message}))
+        return
+
+    result = call_api(args.payload, args.api_url, api_key)
 
     if result["ok"]:
         print(result["body"])

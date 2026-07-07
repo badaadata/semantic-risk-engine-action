@@ -73,14 +73,32 @@ def test_main_never_exits_nonzero_on_failure(tmp_path, capsys, monkeypatch):
 
     monkeypatch.setattr(
         sys, "argv",
-        ["call_api.py", "--payload", str(payload_file), "--api-url", "https://api.example.com/v1/analyze",
-         "--api-key", "sre_test"],
+        ["call_api.py", "--payload", str(payload_file), "--api-url", "https://api.example.com/v1/analyze"],
     )
+    monkeypatch.setenv("SRE_API_KEY", "sre_test")
 
     with patch("scripts.call_api.urllib.request.urlopen", side_effect=err):
         main()  # must not raise SystemExit
 
     captured = capsys.readouterr()
     assert "::warning::" in captured.err
+    stdout_payload = json.loads(captured.out)
+    assert stdout_payload["analysis_failed"] is True
+
+
+def test_main_reports_error_when_api_key_missing(tmp_path, capsys, monkeypatch):
+    """Fork PRs never receive the secret — this must warn, not crash or block."""
+    payload_file = _write_payload(tmp_path)
+
+    monkeypatch.setattr(
+        sys, "argv",
+        ["call_api.py", "--payload", str(payload_file), "--api-url", "https://api.example.com/v1/analyze"],
+    )
+    monkeypatch.delenv("SRE_API_KEY", raising=False)
+
+    main()  # must not raise SystemExit, must not even attempt the request
+
+    captured = capsys.readouterr()
+    assert "::error::" in captured.err
     stdout_payload = json.loads(captured.out)
     assert stdout_payload["analysis_failed"] is True

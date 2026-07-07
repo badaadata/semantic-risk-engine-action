@@ -1,6 +1,7 @@
 """Format API response and post/update a GitHub PR comment."""
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -386,13 +387,17 @@ def main():
     parser = argparse.ArgumentParser(description="Format API response and post/update GitHub PR comment.")
     parser.add_argument("--response", required=True, help="Path to API response JSON")
     parser.add_argument("--manifest", required=True, help="Path to manifest.json")
-    parser.add_argument("--token", required=True, help="GitHub token")
     parser.add_argument("--repo", required=True, help="owner/repo string")
     parser.add_argument("--pr", required=True, type=int, help="PR number")
     parser.add_argument("--sha", default="", help="HEAD commit SHA (optional, shown in comment header)")
     parser.add_argument("--skipped", default=None, help="Path to skipped models JSON (new/deleted)")
     parser.add_argument("--api-base-url", default="", help="API base URL (used to build feedback footer links)")
     args = parser.parse_args()
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        print("::error::Semantic Risk Check: GITHUB_TOKEN is empty — cannot post the PR comment.", file=sys.stderr)
+        return
 
     with open(args.response) as f:
         response = json.load(f)
@@ -408,7 +413,7 @@ def main():
             pass  # skipped file is optional — missing is fine
 
     body = format_comment(response, manifest, sha=args.sha, skipped=skipped, api_base_url=args.api_base_url)
-    post_or_update_comment(body, args.token, args.repo, args.pr)
+    post_or_update_comment(body, token, args.repo, args.pr)
 
 
 if __name__ == "__main__":
