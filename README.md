@@ -1,5 +1,7 @@
 # Semantic Risk Engine
 
+[![CI](https://github.com/badaadata/semantic-risk-engine-action/actions/workflows/ci.yml/badge.svg)](https://github.com/badaadata/semantic-risk-engine-action/actions/workflows/ci.yml)
+
 **Catch breaking SQL changes before they merge.**
 
 A GitHub Action for dbt projects. When a pull request changes a model's SQL, it reads the
