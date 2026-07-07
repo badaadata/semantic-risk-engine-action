@@ -13,6 +13,8 @@ from scripts.post_comment import (
     _build_criticality_map,
     _build_downstream_map,
     _build_downstream_names_map,
+    _escape_markdown,
+    _safe_code_fence,
     find_existing_comment,
     format_comment,
     highest_severity,
@@ -489,6 +491,69 @@ def test_critical_marker_in_table_row():
         line for line in comment.splitlines() if line.startswith("| ") and "fct_revenue" in line
     )
     assert "🔴" in table_row
+
+
+def test_safe_code_fence_widens_beyond_embedded_backtick_run():
+    text = "before\n```\nembedded fence attempt\n```\nafter"
+    fenced = _safe_code_fence(text)
+    lines = fenced.splitlines()
+    assert lines[0] == "````"
+    assert lines[-1] == "````"
+    assert lines[1:-1] == text.splitlines()
+
+
+def test_safe_code_fence_default_length_for_clean_text():
+    fenced = _safe_code_fence("no backticks here")
+    assert fenced.startswith("```\n")
+    assert fenced.endswith("\n```")
+
+
+def test_hostile_reason_mention_and_backticks_are_defused():
+    """A reason string crafted from attacker SQL can't @-mention or break formatting."""
+    hostile_item = {
+        "entity": "FILTER",
+        "change_type": "REMOVED",
+        "identifier": "WHERE:status",
+        "severity": "HIGH",
+        "reason": "hey @octocat check this out ```rm -rf /``` and [click me](javascript:alert(1))",
+        "old_value": None,
+        "new_value": None,
+    }
+    response = _make_response(
+        results=[
+            {
+                "model_name": "fct_revenue", "has_error": False, "error_message": None,
+                "high": [hostile_item], "medium": [], "low": [], "info": [],
+            }
+        ],
+        models_with_high_risk=1,
+    )
+    comment = format_comment(response, EMPTY_MANIFEST)
+
+    assert "@octocat" not in comment  # zero-width space breaks the literal substring
+    assert "@" + "\u200b" + "octocat" in comment
+    assert "[click me](javascript:alert(1))" not in comment
+
+
+def test_hostile_error_message_cannot_break_out_of_code_fence():
+    """An error message containing ``` can't prematurely close the fence."""
+    hostile_error = "normal error text\n```\n<script>alert(1)</script>\n```\nmore text"
+    response = _make_response(
+        results=[
+            {
+                "model_name": "broken_model", "has_error": True, "error_message": hostile_error,
+                "high": [], "medium": [], "low": [], "info": [],
+            }
+        ],
+        models_with_high_risk=0,
+    )
+    comment = format_comment(response, EMPTY_MANIFEST)
+
+    # The whole hostile payload — including its embedded ``` runs — must appear
+    # verbatim, wrapped by a single outer fence longer than any backtick run it
+    # contains (3), so it can't prematurely close and leak raw markdown/HTML.
+    outer_fence = "`" * 4
+    assert f"{outer_fence}\n{hostile_error}\n{outer_fence}" in comment
 
 
 def test_highest_severity_none_when_clean():

@@ -139,6 +139,48 @@ def highest_severity(response: dict, skipped: dict | None = None) -> str:
     return "NONE"
 
 
+def _escape_markdown(text: str) -> str:
+    """Escape markdown-significant characters in server-derived free text.
+
+    Defends against SQL/model content that made its way into an API-generated
+    message from breaking the comment's structure or triggering a GitHub
+    @-mention — this text is prose, not a code span, so it can't just be
+    wrapped in backticks.
+    """
+    if not text:
+        return text
+    # Order matters: escape backslashes first so escapes added below aren't
+    # themselves re-escaped.
+    replacements = [
+        ("\\", "\\\\"),
+        ("`", "\\`"),
+        ("*", "\\*"),
+        ("_", "\\_"),
+        ("[", "\\["),
+        ("]", "\\]"),
+        ("<", "&lt;"),
+        (">", "&gt;"),
+        ("@", "@\u200b"),  # zero-width space defuses @-mention detection
+    ]
+    for char, escaped in replacements:
+        text = text.replace(char, escaped)
+    return text
+
+
+def _safe_code_fence(text: str) -> str:
+    """Fence `text` with enough backticks that an embedded ``` can't break out."""
+    longest_run = 0
+    current = 0
+    for ch in text:
+        if ch == "`":
+            current += 1
+            longest_run = max(longest_run, current)
+        else:
+            current = 0
+    fence = "`" * max(3, longest_run + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
 def _format_severity_block(label: str, items: list) -> str:
     if not items:
         return ""
@@ -148,7 +190,7 @@ def _format_severity_block(label: str, items: list) -> str:
         identifier = item.get("identifier", "")
         entity = item.get("entity", "")
         change_type = item.get("change_type", "")
-        reason = item.get("reason", "")
+        reason = _escape_markdown(item.get("reason", ""))
         old_val = item.get("old_value")
         new_val = item.get("new_value")
 
@@ -240,7 +282,7 @@ def format_comment(response: dict, manifest: dict, sha: str = "", skipped: dict 
                 critical_badge = " · **🔴 MODEL MARKED AS CRITICAL**"
             details_blocks.append(
                 f"<details>\n<summary><code>{model_name}</code> — COMPILE ERROR{critical_badge}</summary>\n\n"
-                f"```\n{error_msg}\n```\n"
+                f"{_safe_code_fence(error_msg)}\n"
                 f"{_downstream_details_block(model_name, downstream_names_map)}\n</details>\n"
             )
             continue
