@@ -1,64 +1,64 @@
-# Semantic SQL Risk Check — GitHub Action
+# Semantic Risk Engine
 
-Automatically detects breaking semantic changes in your dbt SQL models and posts a risk summary as a PR comment before anything merges.
+**Catch breaking SQL changes before they merge.**
 
----
+A GitHub Action for dbt projects. When a pull request changes a model's SQL, it reads the
+*meaning* of the change — not the text diff — and posts a comment classifying the risk:
+**HIGH / MEDIUM / LOW / INFO**. In under a minute, with no warehouse access.
 
-## What it does
+![Semantic Risk Engine PR comment](./pr_comment.png)
 
-When a pull request modifies files in `models/`, this action compiles the changed models on both the PR branch and the base branch, sends the compiled SQL to the [Semantic Risk Engine API](https://badaadata.com), and posts a structured comment listing any high, medium, or low-severity changes detected.
+## Why
 
-Your Snowflake (or other warehouse) credentials **never leave your runner** — only the compiled SQL is sent to the API.
+A text diff can't tell you that `LEFT JOIN → INNER JOIN` silently drops rows, or that a
+changed `GROUP BY` quietly altered a metric's grain, or that a dropped `WHERE` expanded
+your dataset. The pipeline runs green; the numbers just become wrong. This Action reads the
+SQL structurally and flags the changes that actually change your results.
 
----
+## What makes it different
 
-## Prerequisites
+- **Deterministic.** Same diff → same verdict, every time. Safe to gate a merge on —
+  unlike an LLM reviewer. The full [classification rules](./RULES.md) are public: you know
+  in advance what gets flagged, and as what.
+- **No warehouse.** Pure static analysis. No credentials, no query execution, no customer
+  data. The only thing that leaves your CI is the compiled SQL text, sent over TLS to our
+  API. (Self-hosted option is on the roadmap.)
+- **Graded, not binary.** An opinionated HIGH/MED/LOW/INFO call — plus business-criticality
+  weighting: tag your revenue models and changes to them are flagged first, with the
+  downstream blast radius listed.
+- **Quiet by design.** Reformatting, comments, column reordering, consistent alias renames —
+  no events. Zero false positives in benchmark testing. Alert fatigue is what gets a CI
+  check turned off.
 
-- dbt installed in your CI environment (`dbt-snowflake`, `dbt-bigquery`, etc.)
-- A Semantic Risk Engine API key (`sre_...`) from [badaadata.com](https://badaadata.com)
-- GitHub Actions enabled on your repository
-
----
-
-## Setup
-
-### Step 1 — Add the workflow file
-
-Create `.github/workflows/semantic-risk.yml` in your dbt project:
+## Quick start
 
 ```yaml
-name: Semantic SQL Risk Check
-
-on:
-  pull_request:
-    paths:
-      - 'models/**/*.sql'
-
+# .github/workflows/semantic-risk.yml
+name: Semantic Risk
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write   # required — the action posts the verdict as a PR comment
 jobs:
-  semantic-risk:
+  risk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0        # required — needs full git history for diff
+          fetch-depth: 0        # required — the action diffs against the PR's base branch
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install dbt
-        run: pip install dbt-snowflake   # change for your warehouse
+      - run: pip install dbt-snowflake   # swap for your warehouse adapter
 
-      - name: Semantic SQL Risk Check
-        uses: badaadata/semantic-risk-engine-action@v1
+      - uses: badaadata/semantic-risk-engine-action@v1
+        continue-on-error: true   # shadow mode — an API hiccup must never fail your build
         with:
-          api_key:          ${{ secrets.SEMANTIC_RISK_API_KEY }}
-          dialect:          snowflake      # snowflake | bigquery | databricks | duckdb
-          dbt_profiles_dir: .             # where profiles.yml lives
-          dbt_target:       ci            # your CI target in profiles.yml
+          api_key: ${{ secrets.SEMANTIC_RISK_API_KEY }}
         env:
-          # Snowflake credentials — stay on your runner, never sent to our API
+          # your existing warehouse credentials — stay on your runner, never sent to our API
           DBT_SNOWFLAKE_ACCOUNT:   ${{ secrets.SNOWFLAKE_ACCOUNT }}
           DBT_SNOWFLAKE_USER:      ${{ secrets.SNOWFLAKE_USER }}
           DBT_SNOWFLAKE_PASSWORD:  ${{ secrets.SNOWFLAKE_PASSWORD }}
@@ -67,139 +67,88 @@ jobs:
           DBT_SNOWFLAKE_SCHEMA:    ${{ secrets.SNOWFLAKE_SCHEMA }}
 ```
 
-### Step 2 — Add the API key secret
+1. Add the workflow file above to your dbt repo.
+2. Add your API key as a repo secret named `SEMANTIC_RISK_API_KEY`
+   (Settings → Secrets and variables → Actions).
+3. Open a PR that changes a model — the risk comment appears.
 
-Go to your repository: **Settings → Secrets and variables → Actions → New repository secret**
+**Prerequisite:** a working `dbt compile` in CI — the same setup your existing dbt jobs use.
+The action needs `fetch-depth: 0` on checkout (it diffs against the PR's base branch) and
+dbt installed on the runner before it runs.
 
-Add a secret named `SEMANTIC_RISK_API_KEY` with your `sre_...` key from [badaadata.com](https://badaadata.com).
+**Do not mark this check as required during beta.** Shadow mode means it comments and never
+gates — keep `continue-on-error: true` so an API outage can't block your merges.
 
-### Step 3 — Open a PR
+## Get an API key
 
-Open a pull request that changes any file under `models/`. A comment will appear automatically with the risk assessment.
+We're in **private beta** — free, ~15-minute white-glove setup, and we wire it up with you.
+What we ask in return: run it on real PRs and tell us every verdict we get wrong.
 
----
+**→ info@badaadata.com** (subject: "Semantic Risk Engine beta")
 
-## What the comment looks like
+Open-source dbt projects (public repos): free forever — same address.
 
+## What it catches
+
+Joins (type, direction, condition, key) · filters incl. boolean predicates (`WHERE NOT
+is_deleted`) · `GROUP BY` grain incl. ROLLUP/CUBE · aggregations · columns (added, removed,
+expression, lineage) · window functions and `QUALIFY` · CTEs, nested to any depth · scalar
+subqueries · `UNION`/`INTERSECT`/`EXCEPT` · `EXISTS` and `IN (subquery)` predicates.
+
+Validated: 16/16 injected breaking-change classes caught across two real dbt packages
+(Fivetran's Stripe + Salesforce), 0 false positives, 1,200+ automated tests. Known limits
+are documented honestly in the [rules reference](./RULES.md) — e.g. `LATERAL FLATTEN`
+input changes are a current gap.
+
+## Mark your critical models (optional)
+
+```yaml
+# in a model's schema.yml
+models:
+  - name: fct_revenue
+    config:
+      meta:
+        semantic_risk_critical: true
 ```
-## 🔍 Semantic SQL Risk Check
 
-| Model | 🔴 HIGH | 🟡 MEDIUM | 🟢 LOW | ℹ️ INFO | Downstream |
-|-------|---------|----------|--------|---------|------------|
-| `fct_revenue` | ❌ 1 | ⚠️ 2 | — | — | 14 |
-| `stg_orders` | — | — | ✅ 1 | — | 3 |
-
-<details>
-<summary><code>fct_revenue</code> — 1 HIGH, 2 MEDIUM</summary>
-
-**🔴 HIGH**
-
-- `FILTER REMOVED` — `WHERE:status`
-  A WHERE filter was removed. Queries may return more rows than expected.
-  removed: `status = 'active'`
-
-</details>
-
----
-⚠️ 1 HIGH risk change(s) detected. Review before merging.
-14 downstream models may be affected by changes in fct_revenue.
-```
-
-The comment is updated in-place on each new push to the PR — no duplicate comments.
-
----
-
-## Inputs reference
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `api_key` | yes | — | Your `sre_...` API key from badaadata.com |
-| `dialect` | no | `snowflake` | SQL dialect passed to the engine |
-| `dbt_profiles_dir` | no | `.` | Directory containing `profiles.yml` |
-| `dbt_target` | no | `ci` | dbt target name to use for compilation |
-| `api_base_url` | no | `https://api.badaadata.com` | API base URL (override for local/ngrok testing) |
-
----
-
-## How it works
-
-1. Detects which `.sql` files under `models/` changed in the PR using `git diff`
-2. Compiles only those models (`dbt compile --select ...`) on the PR branch and the base branch
-3. Sends the compiled SQL to the Semantic Risk Engine API — your warehouse credentials never leave your runner
-4. Posts (or updates) a structured PR comment with the risk breakdown
-
----
-
-## Supported warehouses
-
-Snowflake, BigQuery, Databricks, DuckDB, Redshift — any warehouse supported by dbt.
-
----
+Changes to tagged models are sorted first, marked 🔴, and the downstream models affected
+are listed in the comment.
 
 ## Troubleshooting
 
-**"No SQL model changes detected"**
-Check that your `paths:` filter in the workflow YAML matches where your `.sql` models actually live. The default `models/**/*.sql` covers the standard dbt project layout.
+- **403 posting the comment** — your org defaults `GITHUB_TOKEN` to read-only. Add the
+  `permissions:` block from the example above.
+- **"dbt compile failed"** — the action reuses your CI's dbt setup; if your existing dbt
+  jobs can't compile on this runner, fix that first.
+- **What's in the request?** Exactly: model name, old compiled SQL, new compiled SQL,
+  dialect, and the PR reference — nothing else. One honest caveat: if your model SQL calls
+  `env_var()` directly, the *compiled* SQL will contain those resolved values, like any
+  system that reads compiled dbt output. Keep secrets out of model logic (standard dbt
+  practice) and nothing sensitive can appear.
 
-**"dbt compile failed"**
-Verify that `dbt_target` matches a valid target in your `profiles.yml`. The action automatically retries with `--empty` (no warehouse connection needed) as a fallback. If you don't have a CI target, add one with `type: snowflake` and empty credentials — the `--empty` flag compiles without executing.
+## What it does NOT do
 
-**"API error 401"**
-Check that the `SEMANTIC_RISK_API_KEY` secret is set correctly in your repository settings (Settings → Secrets → Actions). Make sure there are no leading/trailing spaces in the secret value.
+It analyzes SQL structure, not your data — it tells you a change *could* alter results,
+not that the numbers *did* change. GitHub + dbt only for now. During beta it runs in
+shadow mode: it comments, it never blocks a merge.
 
-**"API error 402 / quota exceeded"**
-Your plan limit has been reached. Contact [support@badaadata.com](mailto:support@badaadata.com) to upgrade.
+## Risk levels at a glance
 
-**New models are skipped**
-If a model was added in this PR (it doesn't exist on the base branch), it is skipped with an INFO log — there is no base SQL to compare against. This is expected behavior.
+| Level | Meaning | Example |
+|-------|---------|---------|
+| HIGH | Result set / business meaning likely changes | `LEFT→INNER` join, dropped filter, grain change |
+| MEDIUM | Output values or schema may change | `SUM→COUNT`, filter threshold, column removed |
+| LOW | Minor / structural change | new aggregation added |
+| INFO | No semantic impact | column reorder, reformat, comments |
 
----
-
-## Testing locally
-
-After the API server is running locally with ngrok:
-
-```bash
-# 1. Simulate a changed models file
-echo "models/marts/fct_revenue.sql" > /tmp/test_changed.txt
-
-# 2. Build a test payload manually
-python3 scripts/build_payload.py \
-  --changed /tmp/test_changed.txt \
-  --base-dir /tmp/sre_base_compiled \
-  --head-dir /tmp/sre_head_compiled \
-  --manifest /tmp/sre_manifest.json \
-  --dialect snowflake \
-  > /tmp/test_payload.json
-
-# 3. Call the API (use your ngrok URL)
-python3 scripts/call_api.py \
-  --payload /tmp/test_payload.json \
-  --api-url https://abc123.ngrok-free.app/v1/analyze \
-  --api-key sre_YOUR_KEY \
-  > /tmp/test_response.json
-
-# 4. Preview the formatted comment (without posting to GitHub)
-python3 -c "
-import json
-from scripts.post_comment import format_comment
-response = json.load(open('/tmp/test_response.json'))
-manifest = json.load(open('/tmp/sre_manifest.json'))
-print(format_comment(response, manifest))
-"
-```
-
-To override the API URL in the action itself, pass `api_base_url` as an input:
-
-```yaml
-- uses: badaadata/semantic-risk-engine-action@v1
-  with:
-    api_key:     ${{ secrets.SEMANTIC_RISK_API_KEY }}
-    api_base_url: https://abc123.ngrok-free.app
-```
-
----
+Full rulebook: [RULES.md](./RULES.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](./LICENSE) — this repository (the Action client). The analysis engine itself is a
+hosted service and is not part of this repository.
+
+---
+
+*Built by [Badaa Data](https://www.badaadata.com). Questions, wrong verdicts, feature
+requests: info@badaadata.com — we read every one.*
