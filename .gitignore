@@ -4,3 +4,8 @@ __pycache__/
 .env
 *.db
 /tmp/
+
+# Internal review/planning docs — never meant for the public repo
+action_repo_review_prompt.md
+action_repo_fix_session_prompt.md
+action_feedback_footer_prompt.md
