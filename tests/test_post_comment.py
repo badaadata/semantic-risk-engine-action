@@ -1,5 +1,7 @@
+import io
 import json
 import sys
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +15,7 @@ from scripts.post_comment import (
     _build_downstream_names_map,
     find_existing_comment,
     format_comment,
+    post_or_update_comment,
 )
 
 EMPTY_MANIFEST = {"metadata": {"project_name": "my_project"}, "nodes": {}, "child_map": {}}
@@ -485,6 +488,36 @@ def test_critical_marker_in_table_row():
         line for line in comment.splitlines() if line.startswith("| ") and "fct_revenue" in line
     )
     assert "🔴" in table_row
+
+
+def test_post_comment_403_gives_actionable_permissions_message():
+    err = urllib.error.HTTPError(
+        url="https://api.github.com/repos/owner/repo/issues/1/comments", code=403,
+        msg="Forbidden", hdrs=None, fp=io.BytesIO(b"Resource not accessible by integration"),
+    )
+    with patch("scripts.post_comment._github_request", side_effect=err):
+        result = post_or_update_comment("body", "fake-token", "owner/repo", 1)
+
+    assert result["ok"] is False
+    assert result["annotation"] == "error"
+    assert "permissions:" in result["message"]
+
+
+def test_post_comment_timeout_gives_warning_not_crash():
+    err = urllib.error.URLError("timed out")
+    with patch("scripts.post_comment._github_request", side_effect=err):
+        result = post_or_update_comment("body", "fake-token", "owner/repo", 1)
+
+    assert result["ok"] is False
+    assert result["annotation"] == "warning"
+    assert "timed out" in result["message"]
+
+
+def test_post_comment_success_returns_ok():
+    with patch("scripts.post_comment._github_request", side_effect=[[], {"id": 42}]):
+        result = post_or_update_comment("body", "fake-token", "owner/repo", 1)
+
+    assert result == {"ok": True}
 
 
 def test_analysis_failed_renders_non_blocking_message():

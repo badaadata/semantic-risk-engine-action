@@ -371,16 +371,46 @@ def find_existing_comment(token: str, repo: str, pr_number: int):
     return None
 
 
-def post_or_update_comment(body: str, token: str, repo: str, pr_number: int):
-    existing_id = find_existing_comment(token, repo, pr_number)
-    if existing_id:
-        url = f"https://api.github.com/repos/{repo}/issues/comments/{existing_id}"
-        result = _github_request(url, "PATCH", token, data={"body": body})
-        print(f"Updated comment {result['id']}")
-    else:
-        url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
-        result = _github_request(url, "POST", token, data={"body": body})
-        print(f"Posted comment {result['id']}")
+def _github_error_result(e: urllib.error.HTTPError) -> dict:
+    if e.code == 403:
+        message = (
+            "GitHub API returned 403 (Forbidden) — your workflow's GITHUB_TOKEN likely lacks "
+            "pull-requests: write. Add the permissions: block shown in the README Quick start."
+        )
+        return {"ok": False, "message": message, "annotation": "error"}
+    if e.code == 404:
+        return {"ok": False, "message": "GitHub API returned 404 — repo or PR not found", "annotation": "warning"}
+    if e.code == 429 or e.code >= 500:
+        return {
+            "ok": False,
+            "message": f"GitHub API returned {e.code} — rate limited or unavailable, will retry next run",
+            "annotation": "warning",
+        }
+    return {"ok": False, "message": f"GitHub API error {e.code}", "annotation": "warning"}
+
+
+def post_or_update_comment(body: str, token: str, repo: str, pr_number: int) -> dict:
+    """Post or update the PR comment. Never raises; always returns a result dict.
+
+    Success: {"ok": True}
+    Failure: {"ok": False, "message": <human-readable reason>, "annotation": "error"|"warning"}
+    """
+    try:
+        existing_id = find_existing_comment(token, repo, pr_number)
+
+        if existing_id:
+            url = f"https://api.github.com/repos/{repo}/issues/comments/{existing_id}"
+            result = _github_request(url, "PATCH", token, data={"body": body})
+            print(f"Updated comment {result['id']}")
+        else:
+            url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+            result = _github_request(url, "POST", token, data={"body": body})
+            print(f"Posted comment {result['id']}")
+        return {"ok": True}
+    except urllib.error.HTTPError as e:
+        return _github_error_result(e)
+    except urllib.error.URLError as e:
+        return {"ok": False, "message": f"cannot reach GitHub API: {e.reason}", "annotation": "warning"}
 
 
 def main():
@@ -413,7 +443,9 @@ def main():
             pass  # skipped file is optional — missing is fine
 
     body = format_comment(response, manifest, sha=args.sha, skipped=skipped, api_base_url=args.api_base_url)
-    post_or_update_comment(body, token, args.repo, args.pr)
+    result = post_or_update_comment(body, token, args.repo, args.pr)
+    if not result["ok"]:
+        print(f"::{result['annotation']}::Semantic Risk Check: {result['message']}", file=sys.stderr)
 
 
 if __name__ == "__main__":
