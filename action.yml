@@ -27,6 +27,15 @@ inputs:
     required: false
     default: "false"
 
+outputs:
+  highest_severity:
+    description: "Highest risk severity found this run: HIGH, MEDIUM, LOW, INFO, or NONE (also NONE if no models changed or analysis couldn't complete)."
+    value: ${{ steps.post-comment.outputs.highest_severity || steps.compile-head.outputs.highest_severity || steps.skip-no-changes.outputs.highest_severity }}
+
+branding:
+  icon: shield
+  color: blue
+
 runs:
   using: composite
   steps:
@@ -46,6 +55,7 @@ runs:
         fi
 
     - name: Compile PR branch (HEAD)
+      id: compile-head
       if: env.SRE_NO_CHANGES != 'true'
       shell: bash
       env:
@@ -76,6 +86,7 @@ runs:
         else
           echo "::warning::Semantic Risk Check: dbt compile failed on the PR branch — skipping analysis this run. This does not block your merge."
           echo "SRE_COMPILE_FAILED=true" >> $GITHUB_ENV
+          echo "highest_severity=NONE" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Compile base branch
@@ -137,6 +148,7 @@ runs:
           > /tmp/sre_response.json
 
     - name: Post PR comment
+      id: post-comment
       if: env.SRE_NO_CHANGES != 'true' && env.SRE_COMPILE_FAILED != 'true'
       shell: bash
       env:
@@ -153,7 +165,9 @@ runs:
           --api-base-url "$SRE_API_BASE_URL"
 
     - name: Skip — no SQL model changes
+      id: skip-no-changes
       if: env.SRE_NO_CHANGES == 'true'
       shell: bash
       run: |
         echo "No SQL model changes detected in models/. Skipping semantic risk check."
+        echo "highest_severity=NONE" >> "$GITHUB_OUTPUT"

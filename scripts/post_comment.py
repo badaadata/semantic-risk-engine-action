@@ -122,6 +122,23 @@ def _has_impactful_risk(result: dict) -> bool:
     return any(result.get(level) for level in ("high", "medium", "low"))
 
 
+def highest_severity(response: dict, skipped: dict | None = None) -> str:
+    """HIGH, MEDIUM, LOW, INFO, or NONE — for the action's highest_severity output."""
+    if response.get("analysis_failed"):
+        return "NONE"
+    skipped = skipped or {}
+    results = response.get("results", [])
+    if skipped.get("deleted") or any(r.get("high") for r in results):
+        return "HIGH"
+    if any(r.get("medium") for r in results):
+        return "MEDIUM"
+    if any(r.get("low") for r in results):
+        return "LOW"
+    if any(r.get("info") for r in results):
+        return "INFO"
+    return "NONE"
+
+
 def _format_severity_block(label: str, items: list) -> str:
     if not items:
         return ""
@@ -446,6 +463,11 @@ def main():
     result = post_or_update_comment(body, token, args.repo, args.pr)
     if not result["ok"]:
         print(f"::{result['annotation']}::Semantic Risk Check: {result['message']}", file=sys.stderr)
+
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with open(github_output, "a") as f:
+            f.write(f"highest_severity={highest_severity(response, skipped)}\n")
 
 
 if __name__ == "__main__":

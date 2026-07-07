@@ -15,6 +15,7 @@ from scripts.post_comment import (
     _build_downstream_names_map,
     find_existing_comment,
     format_comment,
+    highest_severity,
     post_or_update_comment,
 )
 
@@ -488,6 +489,37 @@ def test_critical_marker_in_table_row():
         line for line in comment.splitlines() if line.startswith("| ") and "fct_revenue" in line
     )
     assert "🔴" in table_row
+
+
+def test_highest_severity_none_when_clean():
+    assert highest_severity(_make_response(results=[_clean_result("m")])) == "NONE"
+
+
+def test_highest_severity_high_beats_everything():
+    response = _make_response(results=[_high_result("a")])
+    assert highest_severity(response) == "HIGH"
+
+
+def test_highest_severity_deleted_model_counts_as_high():
+    response = _make_response(results=[])
+    assert highest_severity(response, skipped={"deleted": ["m"]}) == "HIGH"
+
+
+def test_highest_severity_medium():
+    result = {
+        "model_name": "m", "has_error": False, "error_message": None,
+        "high": [], "medium": [{"identifier": "x"}], "low": [], "info": [],
+    }
+    assert highest_severity(_make_response(results=[result])) == "MEDIUM"
+
+
+def test_highest_severity_info_only():
+    assert highest_severity(_make_response(results=[_info_result("m")])) == "INFO"
+
+
+def test_highest_severity_analysis_failed_is_none():
+    response = {"analysis_failed": True, "message": "timed out"}
+    assert highest_severity(response) == "NONE"
 
 
 def test_post_comment_403_gives_actionable_permissions_message():
