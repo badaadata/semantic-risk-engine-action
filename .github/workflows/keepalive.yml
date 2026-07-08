@@ -1,0 +1,32 @@
+name: API keep-warm ping
+
+# Render's free tier spins the API container down after ~15 min idle; the next
+# request pays a cold-start penalty of 30-60s+, which can burn most of this
+# Action's 120s client timeout before any analysis even starts -- breaking the
+# "verdict in under a minute" claim exactly when a low-traffic beta customer
+# opens their first PR of the day. See docs/api_prepublication_review.md P1-9
+# in the semantic-risk-engine repo.
+#
+# This lives here (the public repo) rather than in the private API repo
+# because public-repo Actions minutes are free/unlimited -- a 10-minute cron
+# there would burn ~4,320 min/month against the private repo's 2,000/month cap
+# on its own.
+#
+# Toggle: flip the KEEPALIVE_ENABLED repository variable (Settings > Secrets
+# and variables > Actions > Variables) to "true"/"false". No commit needed;
+# takes effect on the next scheduled tick. Turn ON during active beta-testing
+# windows, OFF otherwise. Delete this workflow entirely once the API moves off
+# the free tier to a plan that doesn't spin down.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    if: vars.KEEPALIVE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: curl -sf --max-time 30 "https://api.badaadata.com/health"
