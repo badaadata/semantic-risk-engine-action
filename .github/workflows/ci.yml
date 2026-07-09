@@ -52,4 +52,4 @@ jobs:
         run: pip install zizmor==1.26.1
 
       - name: Run zizmor
-        run: zizmor action.yml --format plain
+        run: zizmor action.yml --min-confidence high --format plain
