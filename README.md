@@ -55,6 +55,8 @@ jobs:
 
       - run: pip install dbt-snowflake   # swap for your warehouse adapter
 
+      - run: dbt deps                    # required if your project has packages.yml
+
       - uses: badaadata/semantic-risk-engine-action@v1
         continue-on-error: true   # shadow mode — an API hiccup must never fail your build
         with:
@@ -64,6 +66,7 @@ jobs:
           DBT_SNOWFLAKE_ACCOUNT:   ${{ secrets.SNOWFLAKE_ACCOUNT }}
           DBT_SNOWFLAKE_USER:      ${{ secrets.SNOWFLAKE_USER }}
           DBT_SNOWFLAKE_PASSWORD:  ${{ secrets.SNOWFLAKE_PASSWORD }}
+          DBT_SNOWFLAKE_ROLE:      ${{ secrets.SNOWFLAKE_ROLE }}
           DBT_SNOWFLAKE_DATABASE:  ${{ secrets.SNOWFLAKE_DATABASE }}
           DBT_SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
           DBT_SNOWFLAKE_SCHEMA:    ${{ secrets.SNOWFLAKE_SCHEMA }}
