@@ -43,6 +43,7 @@ Also HIGH: **join condition (ON clause) changed**, **join target table changed**
 | WHERE ↔ HAVING placement changed | **HIGH** | Predicate now evaluates at a different stage. |
 | Threshold / literal value changed | MEDIUM | Same shape, different cut-off. |
 | Comparison operator changed (`=`, `>`, `IN`, …) | MEDIUM | Row inclusion logic differs. |
+| Boolean logic changed (`AND` ↔ `OR`) | MEDIUM | Filter predicate modified; row inclusion may differ. |
 | `EXISTS` ↔ `NOT EXISTS` polarity flip | **HIGH** | Filter logic completely inverted. |
 | Value type changed (literal ↔ subquery) | MEDIUM | Predicate source differs. |
 
@@ -93,7 +94,8 @@ A consistent relabel (alias renamed *and* all references updated) produces no ri
 | Window function removed | MEDIUM |
 | Window function added | LOW |
 | Output alias renamed | INFO |
-| Named window (`WINDOW w AS …`) removed or modified | **HIGH** — every function referencing it changes |
+| Named window (`WINDOW w AS …`) removed | **HIGH** — all window functions referencing it will break |
+| Named window (`WINDOW w AS …`) modified | **HIGH** — every function referencing it changes |
 | Named window added | MEDIUM |
 
 ## CTEs and subqueries
